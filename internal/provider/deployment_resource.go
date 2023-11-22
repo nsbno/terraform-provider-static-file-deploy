@@ -146,7 +146,7 @@ func (r *DeploymentResource) Configure(ctx context.Context, req resource.Configu
 		return
 	}
 
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return
 	}
