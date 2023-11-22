@@ -247,13 +247,17 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create S3 bucket: %s", err)
 	}
-	defer deleteS3Bucket(s3Client, sourceBucketName) // Ensure cleanup after the test
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, sourceBucketName) // Ensure cleanup after the test
 
 	err = createS3Bucket(s3Client, targetBucketName)
 	if err != nil {
 		t.Fatalf("Failed to create S3 bucket: %s", err)
 	}
-	defer deleteS3Bucket(s3Client, targetBucketName) // Ensure cleanup after the test
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, targetBucketName) // Ensure cleanup after the test
 
 	expectedFiles, err := createTestZIP(zipPath)
 	if err != nil {

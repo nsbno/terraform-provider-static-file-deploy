@@ -12,10 +12,6 @@ import (
 
 var testAccProvider, _ = convertProviderType(New("test")())
 
-const testAcc_ProviderConfig = `
-provider "staticfiledeploy" {}
-`
-
 // testAccProtoV6ProviderFactories are used to instantiate a VyProvider during
 // acceptance testing. The factory function will be invoked for every Terraform
 // CLI command executed to create a VyProvider server to which the CLI can

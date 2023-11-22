@@ -39,10 +39,20 @@ type DeployedFiles map[string]string
 // getDeploymentArtifact returns the deployment artifact for the given key and version.
 // If version is nil, the latest version is returned.
 func (d *Deployment) getDeploymentArtifact(key string, version *string) (*zip.Reader, error) {
-	getObjectInput := &s3.GetObjectInput{
-		Bucket: aws.String(d.SourceBucket),
-		Key:    aws.String(key),
+	var getObjectInput *s3.GetObjectInput
+	if version != nil {
+		getObjectInput = &s3.GetObjectInput{
+			Bucket: aws.String(d.SourceBucket),
+			Key:    aws.String(key),
+		}
+	} else {
+		getObjectInput = &s3.GetObjectInput{
+			Bucket:    aws.String(d.SourceBucket),
+			Key:       aws.String(key),
+			VersionId: version,
+		}
 	}
+
 	result, err := d.s3Client.GetObject(context.Background(), getObjectInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download object from S3: %w", err)
