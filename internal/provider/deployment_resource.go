@@ -4,13 +4,8 @@
 package provider
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -22,9 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
-	"io"
-	"net/http"
-	"path/filepath"
+	"github.com/nsbno/terraform-provider-static-file-deploy/internal/deployer"
 	"strings"
 )
 
@@ -38,7 +31,7 @@ func NewDeploymentResource() resource.Resource {
 
 // DeploymentResource defines the resource implementation.
 type DeploymentResource struct {
-	client *http.Client
+	deployer *deployer.Deployer
 }
 
 type FileState struct {
@@ -148,151 +141,50 @@ func (r *DeploymentResource) Schema(ctx context.Context, req resource.SchemaRequ
 	}
 }
 
-func calculateMD5(content []byte) string {
-	hasher := md5.New()
-	hasher.Write(content)
-	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func downloadAndComputeHashes(s3Client *s3.Client, source string, sourceVersion string) (map[string]string, error) {
-	sourceParts := strings.SplitN(source, "/", 2)
-	if len(sourceParts) != 2 {
-		return nil, fmt.Errorf("invalid source format: %s", source)
+func (r *DeploymentResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
 	}
-	sourceBucket := sourceParts[0]
-	sourceKey := sourceParts[1]
 
-	getObjectInput := &s3.GetObjectInput{
-		Bucket: aws.String(sourceBucket),
-		Key:    aws.String(sourceKey),
-	}
-	result, err := s3Client.GetObject(context.Background(), getObjectInput)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		return nil, fmt.Errorf("failed to download object from S3: %w", err)
-	}
-	defer result.Body.Close()
-
-	buf := new(bytes.Buffer)
-	_, err = io.Copy(buf, result.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read object from S3: %w", err)
-	}
-
-	zipReader, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to unzip file: %w", err)
-	}
-
-	fileHashes := make(map[string]string)
-	for _, file := range zipReader.File {
-		zippedFile, err := file.Open()
-		if err != nil {
-			return nil, fmt.Errorf("failed to open zipped file: %w", err)
-		}
-		defer zippedFile.Close()
-
-		fileContent, err := io.ReadAll(zippedFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read zipped file content: %w", err)
-		}
-
-		fileHashes[file.Name] = calculateMD5(fileContent)
-	}
-
-	return fileHashes, nil
-}
-
-func (r *DeploymentResource) performDeployment(ctx context.Context, state *DeploymentResourceModel, sourcePath, sourceVersion, targetBucket string) error {
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load AWS configuration: %w", err)
+		return
 	}
 	s3Client := s3.NewFromConfig(cfg)
+	r.deployer = &deployer.Deployer{
+		S3Client: s3Client,
+	}
+}
 
-	sourceParts := strings.SplitN(sourcePath, "/", 2)
+func (r *DeploymentResource) runDeployment(data *DeploymentResourceModel) error {
+	sourceParts := strings.SplitN(data.Source.ValueString(), "/", 2)
 	if len(sourceParts) != 2 {
 		return fmt.Errorf("invalid source format: %s", sourceParts)
 	}
 	sourceBucket := sourceParts[0]
 	sourceKey := sourceParts[1]
 
-	getObjectInput := &s3.GetObjectInput{
-		Bucket: aws.String(sourceBucket),
-		Key:    aws.String(sourceKey),
-	}
-	result, err := s3Client.GetObject(ctx, getObjectInput)
-	if err != nil {
-		return fmt.Errorf("failed to download object from S3: %w", err)
-	}
-	defer result.Body.Close()
+	deployment := r.deployer.NewDeployment(sourceBucket, data.Target.ValueString())
 
-	buf := new(bytes.Buffer)
-	_, err = io.Copy(buf, result.Body)
+	deployedFiles, err := deployment.Deploy(sourceKey, nil)
 	if err != nil {
-		return fmt.Errorf("failed to read object from S3: %w", err)
-	}
-
-	zipReader, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		return fmt.Errorf("failed to unzip file: %w", err)
+		return fmt.Errorf("Error during deployment: %w", err)
 	}
 
 	var files []FileState
-	for _, file := range zipReader.File {
-		zippedFile, err := file.Open()
-		if err != nil {
-			return fmt.Errorf("failed to open zipped file: %w", err)
-		}
-		defer zippedFile.Close()
-
-		fileContent, err := io.ReadAll(zippedFile)
-		if err != nil {
-			return fmt.Errorf("failed to read zipped file content: %w", err)
-		}
-
-		_, fileName := filepath.Split(file.Name)
-		md5Checksum := calculateMD5(fileContent) // Implement this function
-
-		putObjectInput := &s3.PutObjectInput{
-			Bucket: aws.String(targetBucket),
-			Key:    aws.String(fileName),
-			Body:   bytes.NewReader(fileContent),
-		}
-		_, err = s3Client.PutObject(ctx, putObjectInput)
-
+	for fileName, md5Checksum := range deployedFiles {
 		files = append(files, FileState{
 			Filename: types.StringValue(fileName),
 			ETag:     types.StringValue(md5Checksum),
 		})
-
 	}
 
 	var filesState, diags = filesValuesToState(files)
 	if diags.HasError() {
 		return fmt.Errorf("failed to set files state: %s", diags)
 	}
-
-	state.Files = *filesState
+	data.Files = *filesState
 	return nil
-}
-
-func (r *DeploymentResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	client, ok := req.ProviderData.(*http.Client)
-
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *http.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
-
-		return
-	}
-
-	r.client = client
 }
 
 func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -304,7 +196,7 @@ func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	err := r.performDeployment(ctx, &data, data.Source.ValueString(), data.SourceVersion.ValueString(), data.Target.ValueString())
+	err := r.runDeployment(&data)
 	if err != nil {
 		resp.Diagnostics.AddError("Error during deployment", err.Error())
 		return
@@ -321,26 +213,28 @@ func (r *DeploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to load AWS configuration", err.Error())
+	sourceParts := strings.SplitN(state.Source.ValueString(), "/", 2)
+	if len(sourceParts) != 2 {
+		resp.Diagnostics.AddError("Could not read source format", fmt.Sprintf("invalid source format: %s", sourceParts))
 		return
 	}
-	s3Client := s3.NewFromConfig(cfg)
+	sourceBucket := sourceParts[0]
+	sourceKey := sourceParts[1]
 
-	sourceFileHashes, err := downloadAndComputeHashes(s3Client, state.Source.ValueString(), state.SourceVersion.ValueString())
+	deployment := r.deployer.NewDeployment(sourceBucket, state.Target.ValueString())
+
+	hashesFromSource, err := deployment.HashesForArtifact(sourceKey, nil)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to process source files", err.Error())
 		return
 	}
 
-	updatedFiles := make([]FileState, 0)
+	var updatedFiles []FileState
 
 	files, diags := filesStateToValues(state.Files)
 	resp.Diagnostics.Append(diags...)
 
 	for _, fileState := range files {
-		sourceHash, exists := sourceFileHashes[fileState.Filename.ValueString()]
+		sourceHash, exists := hashesFromSource[fileState.Filename.ValueString()]
 		if !exists || sourceHash != fileState.ETag.ValueString() {
 			updatedFiles = append(updatedFiles, FileState{
 				Filename: fileState.Filename,
@@ -370,33 +264,23 @@ func (r *DeploymentResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
-	err := r.performDeployment(ctx, &data, data.Source.ValueString(), data.SourceVersion.ValueString(), data.Target.ValueString())
+	err := r.runDeployment(&data)
 	if err != nil {
-		resp.Diagnostics.AddError("Error during update", err.Error())
+		resp.Diagnostics.AddError("Error during deployment", err.Error())
 		return
 	}
 
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 func (r *DeploymentResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data DeploymentResourceModel
 
-	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	// If applicable, this is a great opportunity to initialize any necessary
-	// provider client data and make a call using it.
-	// httpResp, err := r.client.Do(httpReq)
-	// if err != nil {
-	//     resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete example, got error: %s", err))
-	//     return
-	// }
 }
 
 func (r *DeploymentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

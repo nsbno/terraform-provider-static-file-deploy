@@ -6,6 +6,8 @@ package provider
 import (
 	"archive/zip"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -99,7 +101,9 @@ func createTestZIP(zipPath string) (map[string]string, error) {
 		}
 
 		// Calculate MD5 hash
-		hash := calculateMD5([]byte(content))
+		hasher := md5.New()
+		hasher.Write([]byte(content))
+		hash := hex.EncodeToString(hasher.Sum(nil))
 		fileHashes[filename] = hash
 	}
 
