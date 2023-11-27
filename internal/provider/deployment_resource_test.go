@@ -17,7 +17,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -69,7 +68,7 @@ func deleteS3Bucket(s3Client *s3.Client, bucketName string) error {
 	return nil
 }
 
-func createTestZIP(zipPath string) (map[string]string, error) {
+func createTestZIP(zipPath string, files map[string]string) (map[string]string, error) {
 	newZipFile, err := os.Create(zipPath)
 	if err != nil {
 		return nil, err
@@ -78,13 +77,6 @@ func createTestZIP(zipPath string) (map[string]string, error) {
 
 	zipWriter := zip.NewWriter(newZipFile)
 	defer zipWriter.Close()
-
-	// Define the contents of the ZIP file
-	files := map[string]string{
-		"file1.txt": "Test content for file1",
-		"file2.txt": "Test content for file2",
-		// Add more files as needed
-	}
 
 	// Map to store the calculated MD5 hashes
 	fileHashes := make(map[string]string)
@@ -184,53 +176,6 @@ func testAccCheckStaticFileDeployDeploymentExists(resourceName string, s3Client 
 	}
 }
 
-func testAccCheckStaticFileDeployDeploymentFiles(resourceName string, expectedFiles map[string]string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[resourceName]
-		if !ok {
-			return fmt.Errorf("Not found: %s", resourceName)
-		}
-
-		println(rs.Primary.String())
-		numFilesStr, ok := rs.Primary.Attributes["files.#"]
-
-		if !ok {
-			return fmt.Errorf("files attribute not found in resource state")
-		}
-
-		// parse num files to int
-		var numFiles, err = strconv.Atoi(numFilesStr)
-		if err != nil {
-			return fmt.Errorf("error parsing files attribute: %s", err)
-		}
-
-		for i := 0; i < numFiles; i++ {
-			filenameAttr := fmt.Sprintf("files.%d.filename", i)
-			etagAttr := fmt.Sprintf("files.%d.etag", i)
-
-			fileName, ok := rs.Primary.Attributes[filenameAttr]
-			if !ok {
-				return fmt.Errorf("filename attribute not found in resource state")
-			}
-
-			etag, ok := rs.Primary.Attributes[etagAttr]
-			if !ok {
-				return fmt.Errorf("etag attribute not found in resource state")
-			}
-
-			expectedHash, ok := expectedFiles[fileName]
-			if !ok {
-				return fmt.Errorf("unexpected file: %s", fileName)
-			}
-			if etag != expectedHash {
-				return fmt.Errorf("hash mismatch for file %s: expected %s, got %s", fileName, expectedHash, etag)
-			}
-		}
-
-		return nil
-	}
-}
-
 func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -240,8 +185,6 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 
 	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
 	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
-	zipPath := "test.zip"
-	zipKey := "test.zip"
 
 	err = createS3Bucket(s3Client, sourceBucketName)
 	if err != nil {
@@ -259,7 +202,15 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 		_ = deleteS3Bucket(s3Client, bucketName)
 	}(s3Client, targetBucketName) // Ensure cleanup after the test
 
-	expectedFiles, err := createTestZIP(zipPath)
+	zipPath := "test_a.zip"
+	zipKey := "test_a.zip"
+
+	filesToCreate := map[string]string{
+		"file1.txt": "Test content for file1",
+		"file2.txt": "Test content for file2",
+	}
+
+	expectedFiles, err := createTestZIP(zipPath, filesToCreate)
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
@@ -285,8 +236,107 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 				},
 				Config: testAccStaticFileDeployDeploymentConfig(sourceBucketName, zipKey, targetBucketName),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckStaticFileDeployDeploymentFiles("staticfiledeploy_deployment.test_deployment", expectedFiles),
 					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", s3Client, expectedFiles),
+				),
+			},
+		},
+	})
+}
+
+func TestAccStaticFileDeployDeployment_canChangeArtifact(t *testing.T) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	s3Client := s3.NewFromConfig(cfg)
+
+	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
+	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
+
+	err = createS3Bucket(s3Client, sourceBucketName)
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, sourceBucketName) // Ensure cleanup after the test
+
+	err = createS3Bucket(s3Client, targetBucketName)
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, targetBucketName) // Ensure cleanup after the test
+
+	zipPath := "test.zip"
+	zipKey := "test.zip"
+
+	filesToCreate := map[string]string{
+		"file1.txt": "Test content for file1",
+		"file2.txt": "Test content for file2",
+	}
+
+	expectedFiles, err := createTestZIP(zipPath, filesToCreate)
+	if err != nil {
+		t.Fatalf("Failed to create ZIP file: %s", err)
+	}
+	defer os.Remove(zipPath)
+
+	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
+	if err != nil {
+		t.Fatalf("Failed to upload ZIP file to S3: %s", err)
+	}
+
+	zipPath2 := "test2.zip"
+	zipKey2 := "test2.zip"
+
+	filesToCreate2 := map[string]string{
+		"file1.txt": "Test content for file1",
+		"file2.txt": "Changed content in file2",
+		"file3.txt": "New content for file3",
+	}
+
+	expectedFiles2, err := createTestZIP(zipPath2, filesToCreate2)
+	if err != nil {
+		t.Fatalf("Failed to create ZIP file: %s", err)
+	}
+	defer os.Remove(zipPath2)
+
+	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath2, zipKey2)
+	if err != nil {
+		t.Fatalf("Failed to upload ZIP file to S3: %s", err)
+	}
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t) // Implement this function as needed
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"aws": {
+						VersionConstraint: ">= 5.0.0",
+						Source:            "hashicorp/aws",
+					},
+				},
+				Config: testAccStaticFileDeployDeploymentConfig(sourceBucketName, zipKey, targetBucketName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", s3Client, expectedFiles),
+				),
+			},
+			{
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"aws": {
+						VersionConstraint: ">= 5.0.0",
+						Source:            "hashicorp/aws",
+					},
+				},
+				Config: testAccStaticFileDeployDeploymentConfig(sourceBucketName, zipKey2, targetBucketName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", s3Client, expectedFiles2),
 				),
 			},
 		},

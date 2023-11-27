@@ -8,15 +8,10 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/nsbno/terraform-provider-static-file-deploy/internal/deployer"
 	"strings"
 )
@@ -34,69 +29,11 @@ type DeploymentResource struct {
 	deployer *deployer.Deployer
 }
 
-type FileState struct {
-	Filename types.String `tfsdk:"filename"`
-	ETag     types.String `tfsdk:"etag"`
-}
-
-func (s FileState) AttributeTypes() map[string]attr.Type {
-	return map[string]attr.Type{
-		"filename": types.StringType,
-		"etag":     types.StringType,
-	}
-}
-
-func filesStateToValues(files types.List) ([]FileState, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	var fileStates []FileState
-
-	for _, file := range files.Elements() {
-		fileObj, ok := file.(types.Object)
-		if !ok {
-			diags.AddError("Error reading file object", "Expected types.Object")
-			continue
-		}
-
-		var fileState FileState
-		diags = fileObj.As(context.Background(), &fileState, basetypes.ObjectAsOptions{})
-
-		fileStates = append(fileStates, fileState)
-	}
-
-	return fileStates, diags
-}
-
-func filesValuesToState(files []FileState) (*types.List, diag.Diagnostics) {
-	var objects []types.Object
-
-	for _, file := range files {
-		object, diags := types.ObjectValueFrom(context.Background(), file.AttributeTypes(), file)
-
-		if diags.HasError() {
-			return nil, diags
-		}
-
-		objects = append(objects, object)
-	}
-
-	var filesList, diags = types.ListValueFrom(
-		context.Background(),
-		types.ObjectType{AttrTypes: FileState{}.AttributeTypes()},
-		objects,
-	)
-	if diags.HasError() {
-		return nil, diags
-	}
-
-	return &filesList, diags
-}
-
 // DeploymentResourceModel describes the resource data model.
 type DeploymentResourceModel struct {
 	Source        types.String `tfsdk:"source"`
 	SourceVersion types.String `tfsdk:"source_version"`
 	Target        types.String `tfsdk:"target"`
-	Files         types.List   `tfsdk:"files"`
 }
 
 func (r *DeploymentResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -119,23 +56,6 @@ func (r *DeploymentResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"target": schema.StringAttribute{
 				MarkdownDescription: "The target S3 bucket where the unzipped files will be deployed.",
 				Required:            true,
-			},
-			"files": schema.ListNestedAttribute{
-				NestedObject: schema.NestedAttributeObject{
-					Attributes: map[string]schema.Attribute{
-						"filename": schema.StringAttribute{
-							MarkdownDescription: "The name of the file deployed to the target S3 bucket.",
-							Required:            true,
-						},
-						"etag": schema.StringAttribute{
-							MarkdownDescription: "The MD5 checksum (ETag) of the file in the target S3 bucket.",
-							Required:            true,
-						},
-					},
-				},
-				Computed:            true,
-				MarkdownDescription: "A list of files deployed, each with its filename and corresponding MD5 checksum (ETag).",
-				PlanModifiers:       []planmodifier.List{listplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}
@@ -166,24 +86,11 @@ func (r *DeploymentResource) runDeployment(data *DeploymentResourceModel) error 
 
 	deployment := r.deployer.NewDeployment(sourceBucket, data.Target.ValueString())
 
-	deployedFiles, err := deployment.Deploy(sourceKey, nil)
+	_, err := deployment.Deploy(sourceKey, nil)
 	if err != nil {
 		return fmt.Errorf("Error during deployment: %w", err)
 	}
 
-	var files []FileState
-	for fileName, md5Checksum := range deployedFiles {
-		files = append(files, FileState{
-			Filename: types.StringValue(fileName),
-			ETag:     types.StringValue(md5Checksum),
-		})
-	}
-
-	var filesState, diags = filesValuesToState(files)
-	if diags.HasError() {
-		return fmt.Errorf("failed to set files state: %s", diags)
-	}
-	data.Files = *filesState
 	return nil
 }
 
@@ -223,33 +130,11 @@ func (r *DeploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 
 	deployment := r.deployer.NewDeployment(sourceBucket, state.Target.ValueString())
 
-	hashesFromSource, err := deployment.HashesForArtifact(sourceKey, nil)
+	_, err := deployment.HashesForArtifact(sourceKey, nil)
 	if err != nil {
 		return
 	}
 
-	var updatedFiles []FileState
-
-	files, diags := filesStateToValues(state.Files)
-	resp.Diagnostics.Append(diags...)
-
-	for _, fileState := range files {
-		sourceHash, exists := hashesFromSource[fileState.Filename.ValueString()]
-		if !exists || sourceHash != fileState.ETag.ValueString() {
-			updatedFiles = append(updatedFiles, FileState{
-				Filename: fileState.Filename,
-				ETag:     types.StringValue(sourceHash),
-			})
-		} else {
-			updatedFiles = append(updatedFiles, fileState)
-		}
-	}
-
-	var fileState *types.List
-	fileState, diags = filesValuesToState(updatedFiles)
-	resp.Diagnostics.Append(diags...)
-
-	state.Files = *fileState
 	diags = resp.State.Set(ctx, &state)
 	resp.Diagnostics.Append(diags...)
 }
