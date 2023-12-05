@@ -207,7 +207,7 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 
 	filesToCreate := map[string]string{
 		"file1.txt": "Test content for file1",
-		"file2.txt": "Test content for file2",
+		"file2.js":  "Test content for file2",
 	}
 
 	expectedFiles, err := createTestZIP(zipPath, filesToCreate)

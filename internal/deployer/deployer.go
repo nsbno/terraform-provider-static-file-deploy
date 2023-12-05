@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"io"
 	"mime"
-	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -116,14 +116,7 @@ func (d *Deployment) uploadDeploymentArtifactFiles(artifactZip *zip.Reader) erro
 			return fmt.Errorf("failed to read zipped file content: %w", err)
 		}
 
-		contentTypes, err := mime.ExtensionsByType(file.Name)
-
-		var contentType string
-		if contentTypes == nil || err != nil {
-			contentType = http.DetectContentType(fileContent)
-		} else {
-			contentType = contentTypes[0]
-		}
+		contentType := mime.TypeByExtension(filepath.Ext(file.Name))
 
 		putObjectInput := &s3.PutObjectInput{
 			Bucket:      aws.String(d.TargetBucket),
