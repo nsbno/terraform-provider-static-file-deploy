@@ -3,13 +3,12 @@ module github.com/nsbno/terraform-provider-static-file-deploy
 go 1.19
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.22.2
-	github.com/aws/aws-sdk-go-v2/config v1.24.0
+	github.com/aws/aws-sdk-go-v2 v1.24.1
+	github.com/aws/aws-sdk-go-v2/config v1.26.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.42.1
 	github.com/hashicorp/terraform-plugin-docs v0.16.0
 	github.com/hashicorp/terraform-plugin-framework v1.4.2
 	github.com/hashicorp/terraform-plugin-go v0.19.0
-	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/hashicorp/terraform-plugin-testing v1.5.1
 )
 
@@ -22,20 +21,20 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/armon/go-radix v1.0.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.5.0 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.15.2 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.14.3 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.2.2 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.5.2 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/ini v1.7.0 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.16.16 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.14.11 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.2.10 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.5.10 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/ini v1.7.2 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.2.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.10.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.10.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.2.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.10.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.10.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.16.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.17.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.19.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.25.1 // indirect
-	github.com/aws/smithy-go v1.16.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.18.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.21.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.26.7 // indirect
+	github.com/aws/smithy-go v1.19.0 // indirect
 	github.com/bgentry/speakeasy v0.1.0 // indirect
 	github.com/cloudflare/circl v1.3.3 // indirect
 	github.com/fatih/color v1.13.0 // indirect
@@ -56,6 +55,7 @@ require (
 	github.com/hashicorp/logutils v1.0.0 // indirect
 	github.com/hashicorp/terraform-exec v0.19.0 // indirect
 	github.com/hashicorp/terraform-json v0.17.1 // indirect
+	github.com/hashicorp/terraform-plugin-log v0.9.0 // indirect
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.29.0 // indirect
 	github.com/hashicorp/terraform-registry-address v0.2.2 // indirect
 	github.com/hashicorp/terraform-svchost v0.1.1 // indirect
