@@ -129,12 +129,14 @@ resource "staticfiledeploy_deployment" "test_deployment" {
 `, sourceBucketName, zipKey, targetBucketName)
 }
 
-func testAccCheckStaticFileDeployDeploymentExists(resourceName string, s3Client *s3.Client, expectedFiles map[string]string) resource.TestCheckFunc {
+const ResourceName = "staticfiledeploy_deployment.test_deployment"
+
+func testAccCheckStaticFileDeployDeploymentExists(s3Client *s3.Client, expectedFiles map[string]string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Find the resource in the Terraform state
-		rs, ok := s.RootModule().Resources[resourceName]
+		rs, ok := s.RootModule().Resources[ResourceName]
 		if !ok {
-			return fmt.Errorf("resource not found in Terraform state: %s", resourceName)
+			return fmt.Errorf("resource not found in Terraform state: %s", ResourceName)
 		}
 
 		// Extract the target bucket name from the state
@@ -236,7 +238,7 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 				},
 				Config: testAccStaticFileDeployDeploymentConfig(sourceBucketName, zipKey, targetBucketName),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", s3Client, expectedFiles),
+					testAccCheckStaticFileDeployDeploymentExists(s3Client, expectedFiles),
 				),
 			},
 		},
@@ -323,7 +325,7 @@ func TestAccStaticFileDeployDeployment_canChangeArtifact(t *testing.T) {
 				},
 				Config: testAccStaticFileDeployDeploymentConfig(sourceBucketName, zipKey, targetBucketName),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", s3Client, expectedFiles),
+					testAccCheckStaticFileDeployDeploymentExists(s3Client, expectedFiles),
 				),
 			},
 			{
@@ -336,7 +338,7 @@ func TestAccStaticFileDeployDeployment_canChangeArtifact(t *testing.T) {
 				},
 				Config: testAccStaticFileDeployDeploymentConfig(sourceBucketName, zipKey2, targetBucketName),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", s3Client, expectedFiles2),
+					testAccCheckStaticFileDeployDeploymentExists(s3Client, expectedFiles2),
 				),
 			},
 		},
@@ -418,7 +420,7 @@ func TestAccStaticFileDeployDeployment_withTargetRegion(t *testing.T) {
 				},
 				Config: testAccStaticFileDeployDeploymentConfig_withTargetRegion(sourceBucketName, zipKey, targetBucketName, targetBucketRegion),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", targetS3Client, expectedFiles),
+					testAccCheckStaticFileDeployDeploymentExists(targetS3Client, expectedFiles),
 				),
 			},
 		},

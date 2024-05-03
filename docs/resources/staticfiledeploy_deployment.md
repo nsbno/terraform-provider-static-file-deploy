@@ -36,3 +36,7 @@ resource "staticfiledeploy_deployment" "example_deployment" {
 - `source` (String) The S3 bucket and path to the ZIP file containing the source files to be deployed. Format: 'bucket-name/path/to/source.zip'.
 - `source_version` (String) The version ID of the source ZIP file in the S3 bucket. This is used to handle versioning of files in S3.
 - `target` (String) The target S3 bucket where the unzipped files will be deployed.
+
+### Optional
+
+- `target_region` (String) The target region of the S3 bucket where the unzipped files will be deployed.
