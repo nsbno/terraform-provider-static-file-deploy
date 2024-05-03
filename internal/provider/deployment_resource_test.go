@@ -21,11 +21,11 @@ import (
 	"testing"
 )
 
-func createS3Bucket(s3Client *s3.Client, bucketName string) error {
+func createS3Bucket(s3Client *s3.Client, bucketName string, targetBucketRegion string) error {
 	_, err := s3Client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 		CreateBucketConfiguration: &types.CreateBucketConfiguration{
-			LocationConstraint: "eu-west-1",
+			LocationConstraint: types.BucketLocationConstraint(targetBucketRegion),
 		},
 	})
 	return err
@@ -186,7 +186,7 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
 	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
 
-	err = createS3Bucket(s3Client, sourceBucketName)
+	err = createS3Bucket(s3Client, sourceBucketName, "eu-west-1")
 	if err != nil {
 		t.Fatalf("Failed to create S3 bucket: %s", err)
 	}
@@ -194,7 +194,7 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 		_ = deleteS3Bucket(s3Client, bucketName)
 	}(s3Client, sourceBucketName) // Ensure cleanup after the test
 
-	err = createS3Bucket(s3Client, targetBucketName)
+	err = createS3Bucket(s3Client, targetBucketName, "eu-west-1")
 	if err != nil {
 		t.Fatalf("Failed to create S3 bucket: %s", err)
 	}
@@ -253,7 +253,7 @@ func TestAccStaticFileDeployDeployment_canChangeArtifact(t *testing.T) {
 	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
 	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
 
-	err = createS3Bucket(s3Client, sourceBucketName)
+	err = createS3Bucket(s3Client, sourceBucketName, "eu-west-1")
 	if err != nil {
 		t.Fatalf("Failed to create S3 bucket: %s", err)
 	}
@@ -261,7 +261,7 @@ func TestAccStaticFileDeployDeployment_canChangeArtifact(t *testing.T) {
 		_ = deleteS3Bucket(s3Client, bucketName)
 	}(s3Client, sourceBucketName) // Ensure cleanup after the test
 
-	err = createS3Bucket(s3Client, targetBucketName)
+	err = createS3Bucket(s3Client, targetBucketName, "eu-west-1")
 	if err != nil {
 		t.Fatalf("Failed to create S3 bucket: %s", err)
 	}
@@ -337,6 +337,88 @@ func TestAccStaticFileDeployDeployment_canChangeArtifact(t *testing.T) {
 				Config: testAccStaticFileDeployDeploymentConfig(sourceBucketName, zipKey2, targetBucketName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", s3Client, expectedFiles2),
+				),
+			},
+		},
+	})
+}
+
+func testAccStaticFileDeployDeploymentConfig_withTargetRegion(sourceBucketName, zipKey, targetBucketName string, targetRegion string) string {
+	return fmt.Sprintf(`
+resource "staticfiledeploy_deployment" "test_deployment" {
+    source        = "%s/%s"
+    source_version = "some-version"
+    target        = "%s"
+	target_region = "%s"
+}
+`, sourceBucketName, zipKey, targetBucketName, targetRegion)
+}
+
+func TestAccStaticFileDeployDeployment_withTargetRegion(t *testing.T) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	sourceS3Client := s3.NewFromConfig(cfg)
+	targetS3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.Region = "eu-central-1"
+	})
+
+	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
+	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
+	targetBucketRegion := "eu-central-1"
+
+	err = createS3Bucket(sourceS3Client, sourceBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(sourceS3Client, sourceBucketName) // Ensure cleanup after the test
+
+	err = createS3Bucket(targetS3Client, targetBucketName, targetBucketRegion)
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(targetS3Client, targetBucketName) // Ensure cleanup after the test
+
+	zipPath := "test.zip"
+	zipKey := "test.zip"
+
+	filesToCreate := map[string]string{
+		"file1.txt": "Test content for file1",
+		"file2.txt": "Test content for file2",
+	}
+
+	expectedFiles, err := createTestZIP(zipPath, filesToCreate)
+	if err != nil {
+		t.Fatalf("Failed to create ZIP file: %s", err)
+	}
+	defer os.Remove(zipPath)
+
+	err = uploadZIPToS3(sourceS3Client, sourceBucketName, zipPath, zipKey)
+	if err != nil {
+		t.Fatalf("Failed to upload ZIP file to S3: %s", err)
+	}
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t) // Implement this function as needed
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"aws": {
+						VersionConstraint: ">= 5.0.0",
+						Source:            "hashicorp/aws",
+					},
+				},
+				Config: testAccStaticFileDeployDeploymentConfig_withTargetRegion(sourceBucketName, zipKey, targetBucketName, targetBucketRegion),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckStaticFileDeployDeploymentExists("staticfiledeploy_deployment.test_deployment", targetS3Client, expectedFiles),
 				),
 			},
 		},

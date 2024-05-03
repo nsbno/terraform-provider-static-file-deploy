@@ -17,22 +17,26 @@ import (
 
 // Deployer is a client for deploying artifacts.
 type Deployer struct {
-	S3Client *s3.Client
+	DefaultAWSConfig aws.Config
 }
 
-func (d *Deployer) NewDeployment(sourceBucket string, targetBucket string) *Deployment {
+func (d *Deployer) NewDeployment(sourceBucket string, targetBucket string, targetRegion string) *Deployment {
 	return &Deployment{
-		SourceBucket: sourceBucket,
-		TargetBucket: targetBucket,
-		s3Client:     d.S3Client,
+		SourceBucket:   sourceBucket,
+		TargetBucket:   targetBucket,
+		sourceS3Client: s3.NewFromConfig(d.DefaultAWSConfig),
+		targetS3Client: s3.NewFromConfig(d.DefaultAWSConfig, func(o *s3.Options) {
+			o.Region = targetRegion
+		}),
 	}
 }
 
 // Deployment is responsible for deploying artifacts from a source bucket to a target bucket.
 type Deployment struct {
-	SourceBucket string
-	TargetBucket string
-	s3Client     *s3.Client
+	SourceBucket   string
+	TargetBucket   string
+	sourceS3Client *s3.Client
+	targetS3Client *s3.Client
 }
 
 // DeployedFiles is a map of file keys to file hashes.
@@ -55,7 +59,7 @@ func (d *Deployment) getDeploymentArtifact(key string, version *string) (*zip.Re
 		}
 	}
 
-	result, err := d.s3Client.GetObject(context.Background(), getObjectInput)
+	result, err := d.sourceS3Client.GetObject(context.Background(), getObjectInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download object from S3: %w", err)
 	}
@@ -124,7 +128,7 @@ func (d *Deployment) uploadDeploymentArtifactFiles(artifactZip *zip.Reader) erro
 			Body:        bytes.NewReader(fileContent),
 			ContentType: &contentType,
 		}
-		_, err = d.s3Client.PutObject(context.Background(), putObjectInput)
+		_, err = d.targetS3Client.PutObject(context.Background(), putObjectInput)
 		if err != nil {
 			return fmt.Errorf("failed to upload object to S3: %w", err)
 		}
@@ -172,7 +176,7 @@ func (d *Deployment) HashesForArtifact(key string, version *string) (DeployedFil
 // HashesForDeployedFiles returns all files that have been deployed to the target bucket.
 func (d *Deployment) HashesForDeployedFiles() (DeployedFiles, error) {
 	// List objects in the target bucket
-	resp, err := d.s3Client.ListObjectsV2(
+	resp, err := d.targetS3Client.ListObjectsV2(
 		context.Background(),
 		&s3.ListObjectsV2Input{
 			Bucket: aws.String(d.TargetBucket),

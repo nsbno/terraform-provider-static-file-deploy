@@ -7,10 +7,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/nsbno/terraform-provider-static-file-deploy/internal/deployer"
 	"strings"
@@ -34,6 +34,7 @@ type DeploymentResourceModel struct {
 	Source        types.String `tfsdk:"source"`
 	SourceVersion types.String `tfsdk:"source_version"`
 	Target        types.String `tfsdk:"target"`
+	TargetRegion  types.String `tfsdk:"target_region"`
 }
 
 func (r *DeploymentResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -57,6 +58,12 @@ func (r *DeploymentResource) Schema(ctx context.Context, req resource.SchemaRequ
 				MarkdownDescription: "The target S3 bucket where the unzipped files will be deployed.",
 				Required:            true,
 			},
+			"target_region": schema.StringAttribute{
+				MarkdownDescription: "The target region of the S3 bucket where the unzipped files will be deployed.",
+				Optional:            true,
+				Default:             stringdefault.StaticString("eu-west-1"),
+				Computed:            true,
+			},
 		},
 	}
 }
@@ -70,9 +77,9 @@ func (r *DeploymentResource) Configure(ctx context.Context, req resource.Configu
 	if err != nil {
 		return
 	}
-	s3Client := s3.NewFromConfig(cfg)
+
 	r.deployer = &deployer.Deployer{
-		S3Client: s3Client,
+		DefaultAWSConfig: cfg,
 	}
 }
 
@@ -84,7 +91,7 @@ func (r *DeploymentResource) runDeployment(data *DeploymentResourceModel) error 
 	sourceBucket := sourceParts[0]
 	sourceKey := sourceParts[1]
 
-	deployment := r.deployer.NewDeployment(sourceBucket, data.Target.ValueString())
+	deployment := r.deployer.NewDeployment(sourceBucket, data.Target.ValueString(), data.TargetRegion.ValueString())
 
 	_, err := deployment.Deploy(sourceKey, nil)
 	if err != nil {
@@ -128,7 +135,7 @@ func (r *DeploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 	sourceBucket := sourceParts[0]
 	sourceKey := sourceParts[1]
 
-	deployment := r.deployer.NewDeployment(sourceBucket, state.Target.ValueString())
+	deployment := r.deployer.NewDeployment(sourceBucket, state.Target.ValueString(), state.TargetRegion.ValueString())
 
 	_, err := deployment.HashesForArtifact(sourceKey, nil)
 	if err != nil {
