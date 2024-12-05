@@ -1,0 +1,150 @@
+= Vy Static File Deploy Provider
+:toc:
+:!toc-title:
+:!toc-placement:
+
+This provider is used to deploy static files uploaded from the build stage.
+
+Use this in conjunction with the link:https://github.com/nsbno/terraform-provider-vy?tab=readme-ov-file#vy_artifact_version[vy_artifact_version data source] to get the correct version of the artifacts to deploy.
+
+Link to link:https://registry.terraform.io/providers/nsbno/static-file-deploy/latest/docs/resources/staticfiledeploy_deployment[Terraform registry]
+
+toc::[]
+
+== Provider setup
+
+Start by adding this provider to your configuration:
+
+[source]
+----
+terraform {
+  required_providers {
+    staticfiledeploy = {
+      source  = "nsbno/static-file-deploy"
+      version = "x.y.z"
+    }
+  }
+}
+----
+
+== Resource
+This provider has one resource, `staticfiledeploy_deployment`, which is used to deploy static files to a target.
+
+The `source` S3 bucket is where the static files are uploaded from the build stage, and the `target` S3 bucket is where the static files are used, for example as a part of a CloudFront Distribution.
+
+We use this provider to ensure that the target S3 bucket is updated with the correct version of the static files.
+
+
+----
+data "vy_artifact_version" "this" {
+  application = "petstore"
+}
+
+resource "aws_s3_bucket" "website_bucket" {
+  bucket = "123456789012-my-cool-bucket"
+}
+
+resource "staticfiledeploy_deployment" "example_deployment" {
+  source         = "${data.vy_artifact_version.this.store}/${data.vy_artifact_version.this.path}"
+  source_version = data.vy_artifact_version.this.version
+  target         = data.aws_s3_bucket.website_bucket.bucket
+}
+----
+
+== Guide: Deploying a static website with a S3 bucket
+Here is an example of how to deploy a static website with a S3 bucket using the `staticfiledeploy_deployment` resource.
+
+S3 setup with a website configuration, bucket ownership controls, ACL, and versioning:
+----
+resource "aws_s3_bucket" "frontend" {
+  bucket = "some-unique-bucket-name"
+}
+
+resource "aws_s3_bucket_website_configuration" "website" {
+  bucket = aws_s3_bucket.frontend.id
+
+  index_document {
+    suffix = "index.html"
+  }
+
+  error_document {
+    key = "index.html"
+  }
+}
+
+resource "aws_s3_bucket_ownership_controls" "s3_ownership" {
+  bucket = aws_s3_bucket.frontend.id
+  rule {
+    object_ownership = "BucketOwnerPreferred"
+  }
+}
+
+resource "aws_s3_bucket_acl" "acl" {
+  depends_on = [aws_s3_bucket_ownership_controls.s3_ownership]
+
+  bucket = aws_s3_bucket.frontend.id
+  acl    = "private"
+}
+
+resource "aws_s3_bucket_versioning" "versioning" {
+  bucket = aws_s3_bucket.frontend.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+----
+
+Connecting the `staticfiledeploy_deployment` resource to the S3 bucket:
+
+----
+data "vy_artifact_version" "this" {
+  # From the vy_artifact_version data source
+  artifact = "frontend"
+}
+
+resource "staticfiledeploy_deployment" "this" {
+  source         = "${data.vy_artifact_version.this.store}/${data.vy_artifact_version.this.path}"
+  source_version = data.vy_artifact_version.this.version
+
+  # Assume we have an existing website bucket
+  target = data.aws_s3_bucket.frontend.bucket
+}
+----
+
+=== Adding a CloudFront distribution
+When deploying a CloudFront distribution, we can use it with the link:https://github.com/nsbno/terraform-aws-multi-domain-static-site[terraform-aws-multi-domain-static-site] resource to easily set up a CloudFront distribution with an ACM Certificate.
+
+In this example we use the existing S3 Bucket defined above.
+The `website_bucket` is the target S3 bucket where the static files are deployed and updated by this static-file-deploy provider.
+----
+# To use ACM certificates, we need to use add a provider in us-east-1
+provider "aws" {
+  region = "us-east-1"
+  alias  = "certificate_provider"
+}
+
+resource "aws_route53_zone" "main" {
+  name = "infrademo.vydev.io"
+}
+
+module "static-site-with-domain" {
+  source    = "github.com/nsbno/terraform-aws-multi-domain-static-site?ref=x.y.z"
+
+  providers = {
+    aws.certificate_provider = aws.certificate_provider
+  }
+
+  name_prefix         = "static-example"
+
+  use_external_bucket = true
+  website_bucket      = data.aws_s3_bucket.frontend.bucket
+
+  domain_name = {
+    name = "static.infrademo.vydev.io"
+    zone = aws_route53_zone.main.name
+  }
+
+  depends_on = [aws_s3_bucket.frontend]  # from example above
+}
+
+----
