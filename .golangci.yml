@@ -4,15 +4,20 @@ issues:
   max-per-linter: 0
   max-same-issues: 0
 
+output:
+  formats:
+    - format: colored-line-number
+
 linters:
   disable-all: true
   enable:
+    - copyloopvar
     - durationcheck
     - errcheck
-    - exportloopref
     - forcetypeassert
     - godot
     - gofmt
+    - govet
     - gosimple
     - ineffassign
     - makezero
@@ -20,8 +25,7 @@ linters:
     - nilerr
     - predeclared
     - staticcheck
-    - tenv
+    - usetesting
     - unconvert
     - unparam
     - unused
-    - vet

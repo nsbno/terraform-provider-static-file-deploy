@@ -9,6 +9,10 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"strings"
+	"testing"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -16,9 +20,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
-	"os"
-	"strings"
-	"testing"
 )
 
 func createS3Bucket(s3Client *s3.Client, bucketName string, targetBucketRegion string) error {
@@ -421,6 +422,294 @@ func TestAccStaticFileDeployDeployment_withTargetRegion(t *testing.T) {
 				Config: testAccStaticFileDeployDeploymentConfig_withTargetRegion(sourceBucketName, zipKey, targetBucketName, targetBucketRegion),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckStaticFileDeployDeploymentExists(targetS3Client, expectedFiles),
+				),
+			},
+		},
+	})
+}
+
+// Cache Control Tests
+
+func testAccCheckCacheControlHeaders(s3Client *s3.Client, targetBucket string, expectedCacheControl map[string]string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		for fileName, expectedCC := range expectedCacheControl {
+			headOutput, err := s3Client.HeadObject(context.TODO(), &s3.HeadObjectInput{
+				Bucket: aws.String(targetBucket),
+				Key:    aws.String(fileName),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to get metadata for file %s: %w", fileName, err)
+			}
+
+			actualCC := ""
+			if headOutput.CacheControl != nil {
+				actualCC = *headOutput.CacheControl
+			}
+
+			if actualCC != expectedCC {
+				return fmt.Errorf("cache-control mismatch for file %s: expected %q, got %q", fileName, expectedCC, actualCC)
+			}
+		}
+		return nil
+	}
+}
+
+func testAccStaticFileDeployDeploymentConfig_withDefaultCacheControl(sourceBucketName, zipKey, targetBucketName, defaultCacheControl string) string {
+	return fmt.Sprintf(`
+resource "staticfiledeploy_deployment" "test_deployment" {
+    source                = "%s/%s"
+    source_version        = "some-version"
+    target                = "%s"
+    default_cache_control = "%s"
+}
+`, sourceBucketName, zipKey, targetBucketName, defaultCacheControl)
+}
+
+func TestAccStaticFileDeployDeployment_withDefaultCacheControl(t *testing.T) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	s3Client := s3.NewFromConfig(cfg)
+
+	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
+	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
+
+	err = createS3Bucket(s3Client, sourceBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, sourceBucketName)
+
+	err = createS3Bucket(s3Client, targetBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, targetBucketName)
+
+	zipPath := "test_cache.zip"
+	zipKey := "test_cache.zip"
+
+	filesToCreate := map[string]string{
+		"file1.txt": "Test content for file1",
+		"file2.js":  "Test content for file2",
+	}
+
+	expectedFiles, err := createTestZIP(zipPath, filesToCreate)
+	if err != nil {
+		t.Fatalf("Failed to create ZIP file: %s", err)
+	}
+	defer os.Remove(zipPath)
+
+	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
+	if err != nil {
+		t.Fatalf("Failed to upload ZIP file to S3: %s", err)
+	}
+
+	defaultCacheControl := "public, max-age=3600, immutable"
+	expectedCacheControl := map[string]string{
+		"file1.txt": defaultCacheControl,
+		"file2.js":  defaultCacheControl,
+	}
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t)
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"aws": {
+						VersionConstraint: ">= 5.0.0",
+						Source:            "hashicorp/aws",
+					},
+				},
+				Config: testAccStaticFileDeployDeploymentConfig_withDefaultCacheControl(sourceBucketName, zipKey, targetBucketName, defaultCacheControl),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckStaticFileDeployDeploymentExists(s3Client, expectedFiles),
+					testAccCheckCacheControlHeaders(s3Client, targetBucketName, expectedCacheControl),
+				),
+			},
+		},
+	})
+}
+
+func testAccStaticFileDeployDeploymentConfig_withFileOverride(sourceBucketName, zipKey, targetBucketName, defaultCacheControl, overrideFile, overrideCacheControl string) string {
+	return fmt.Sprintf(`
+resource "staticfiledeploy_deployment" "test_deployment" {
+    source                = "%s/%s"
+    source_version        = "some-version"
+    target                = "%s"
+    default_cache_control = "%s"
+
+    file_override {
+        file          = "%s"
+        cache_control = "%s"
+    }
+}
+`, sourceBucketName, zipKey, targetBucketName, defaultCacheControl, overrideFile, overrideCacheControl)
+}
+
+func TestAccStaticFileDeployDeployment_withFileOverride(t *testing.T) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	s3Client := s3.NewFromConfig(cfg)
+
+	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
+	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
+
+	err = createS3Bucket(s3Client, sourceBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, sourceBucketName)
+
+	err = createS3Bucket(s3Client, targetBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, targetBucketName)
+
+	zipPath := "test_override.zip"
+	zipKey := "test_override.zip"
+
+	filesToCreate := map[string]string{
+		"index.html":        "Test HTML content",
+		"entry.worker.js":   "Test worker content",
+		"static/styles.css": "Test CSS content",
+	}
+
+	expectedFiles, err := createTestZIP(zipPath, filesToCreate)
+	if err != nil {
+		t.Fatalf("Failed to create ZIP file: %s", err)
+	}
+	defer os.Remove(zipPath)
+
+	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
+	if err != nil {
+		t.Fatalf("Failed to upload ZIP file to S3: %s", err)
+	}
+
+	defaultCacheControl := "public, max-age=31536000, immutable"
+	workerCacheControl := "public, max-age=3600"
+	expectedCacheControl := map[string]string{
+		"index.html":        defaultCacheControl,
+		"entry.worker.js":   workerCacheControl,
+		"static/styles.css": defaultCacheControl,
+	}
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t)
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"aws": {
+						VersionConstraint: ">= 5.0.0",
+						Source:            "hashicorp/aws",
+					},
+				},
+				Config: testAccStaticFileDeployDeploymentConfig_withFileOverride(sourceBucketName, zipKey, targetBucketName, defaultCacheControl, "entry.worker.js", workerCacheControl),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckStaticFileDeployDeploymentExists(s3Client, expectedFiles),
+					testAccCheckCacheControlHeaders(s3Client, targetBucketName, expectedCacheControl),
+				),
+			},
+		},
+	})
+}
+
+func testAccStaticFileDeployDeploymentConfig_withNoCacheControl(sourceBucketName, zipKey, targetBucketName string) string {
+	return fmt.Sprintf(`
+resource "staticfiledeploy_deployment" "test_deployment" {
+    source         = "%s/%s"
+    source_version = "some-version"
+    target         = "%s"
+}
+`, sourceBucketName, zipKey, targetBucketName)
+}
+
+func TestAccStaticFileDeployDeployment_withNoCacheControl(t *testing.T) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	s3Client := s3.NewFromConfig(cfg)
+
+	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
+	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
+
+	err = createS3Bucket(s3Client, sourceBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, sourceBucketName)
+
+	err = createS3Bucket(s3Client, targetBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, targetBucketName)
+
+	zipPath := "test_no_cache.zip"
+	zipKey := "test_no_cache.zip"
+
+	filesToCreate := map[string]string{
+		"file1.txt": "Test content for file1",
+		"file2.js":  "Test content for file2",
+	}
+
+	expectedFiles, err := createTestZIP(zipPath, filesToCreate)
+	if err != nil {
+		t.Fatalf("Failed to create ZIP file: %s", err)
+	}
+	defer os.Remove(zipPath)
+
+	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
+	if err != nil {
+		t.Fatalf("Failed to upload ZIP file to S3: %s", err)
+	}
+
+	// Expect no cache-control headers (empty strings)
+	expectedCacheControl := map[string]string{
+		"file1.txt": "",
+		"file2.js":  "",
+	}
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t)
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"aws": {
+						VersionConstraint: ">= 5.0.0",
+						Source:            "hashicorp/aws",
+					},
+				},
+				Config: testAccStaticFileDeployDeploymentConfig_withNoCacheControl(sourceBucketName, zipKey, targetBucketName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckStaticFileDeployDeploymentExists(s3Client, expectedFiles),
+					testAccCheckCacheControlHeaders(s3Client, targetBucketName, expectedCacheControl),
 				),
 			},
 		},

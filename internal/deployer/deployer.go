@@ -42,6 +42,16 @@ type Deployment struct {
 // DeployedFiles is a map of file keys to file hashes.
 type DeployedFiles map[string]string
 
+// CacheControlConfig holds cache-control header configuration for deployment.
+type CacheControlConfig struct {
+	// DefaultCacheControl is the cache-control header value to apply to all files by default.
+	// If empty, no cache-control header will be set on files without specific overrides.
+	DefaultCacheControl string
+	// FileOverrides is a map of file paths to cache-control header values.
+	// These override the default cache-control for specific files.
+	FileOverrides map[string]string
+}
+
 // getDeploymentArtifact returns the deployment artifact for the given key and version.
 // If version is nil, the latest version is returned.
 func (d *Deployment) getDeploymentArtifact(key string, version *string) (*zip.Reader, error) {
@@ -107,7 +117,7 @@ func (d *Deployment) getDeploymentArtifactFileHashes(artifactZip *zip.Reader) (m
 }
 
 // uploadDeploymentArtifactFiles uploads the given files to the target bucket.
-func (d *Deployment) uploadDeploymentArtifactFiles(artifactZip *zip.Reader) error {
+func (d *Deployment) uploadDeploymentArtifactFiles(artifactZip *zip.Reader, cacheControlConfig *CacheControlConfig) error {
 	for _, file := range artifactZip.File {
 		zippedFile, err := file.Open()
 		if err != nil {
@@ -128,6 +138,24 @@ func (d *Deployment) uploadDeploymentArtifactFiles(artifactZip *zip.Reader) erro
 			Body:        bytes.NewReader(fileContent),
 			ContentType: &contentType,
 		}
+
+		// Determine cache-control header for this file
+		if cacheControlConfig != nil {
+			var cacheControl string
+			// Check if there's a specific override for this file
+			if override, exists := cacheControlConfig.FileOverrides[file.Name]; exists {
+				cacheControl = override
+			} else if cacheControlConfig.DefaultCacheControl != "" {
+				// Use default if no override exists
+				cacheControl = cacheControlConfig.DefaultCacheControl
+			}
+
+			// Only set CacheControl if we have a value
+			if cacheControl != "" {
+				putObjectInput.CacheControl = aws.String(cacheControl)
+			}
+		}
+
 		_, err = d.targetS3Client.PutObject(context.Background(), putObjectInput)
 		if err != nil {
 			return fmt.Errorf("failed to upload object to S3: %w", err)
@@ -138,13 +166,13 @@ func (d *Deployment) uploadDeploymentArtifactFiles(artifactZip *zip.Reader) erro
 }
 
 // Deploy deploys the artifact with the given key from the source bucket to the target bucket.
-func (d *Deployment) Deploy(key string, version *string) (DeployedFiles, error) {
+func (d *Deployment) Deploy(key string, version *string, cacheControlConfig *CacheControlConfig) (DeployedFiles, error) {
 	artifactZip, err := d.getDeploymentArtifact(key, version)
 	if err != nil {
 		return nil, err
 	}
 
-	err = d.uploadDeploymentArtifactFiles(artifactZip)
+	err = d.uploadDeploymentArtifactFiles(artifactZip, cacheControlConfig)
 	if err != nil {
 		return nil, err
 	}
