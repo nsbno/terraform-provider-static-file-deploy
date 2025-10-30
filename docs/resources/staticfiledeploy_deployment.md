@@ -21,10 +21,32 @@ data "aws_s3_bucket" "website_bucket" {
   bucket = "123456789012-my-cool-bucket"
 }
 
+# Basic deployment without cache control
 resource "staticfiledeploy_deployment" "example_deployment" {
   source         = "${data.vy_artifact_version.this.store}/${data.vy_artifact_version.this.path}"
   source_version = data.vy_artifact_version.this.version
   target         = data.aws_s3_bucket.website_bucket.bucket
+}
+
+# Deployment with default cache control and file-specific overrides
+resource "staticfiledeploy_deployment" "with_cache_control" {
+  source         = "${data.vy_artifact_version.this.store}/${data.vy_artifact_version.this.path}"
+  source_version = data.vy_artifact_version.this.version
+  target         = data.aws_s3_bucket.website_bucket.bucket
+
+  # Apply default cache control to all files
+  default_cache_control = "public, max-age=31536000, immutable"
+
+  # Override cache control for specific files
+  file_override {
+    file          = "index.html"
+    cache_control = "public, max-age=0, must-revalidate"
+  }
+
+  file_override {
+    file          = "service-worker.js"
+    cache_control = "public, max-age=3600"
+  }
 }
 ```
 
@@ -39,4 +61,14 @@ resource "staticfiledeploy_deployment" "example_deployment" {
 
 ### Optional
 
+- `default_cache_control` (String) The default Cache-Control header value to apply to all deployed files. If not specified, no Cache-Control header will be set.
+- `file_override` (Block List) Override the Cache-Control header for specific files. Each file path must be unique across all overrides. (see [below for nested schema](#nestedblock--file_override))
 - `target_region` (String) The target region of the S3 bucket where the unzipped files will be deployed.
+
+<a id="nestedblock--file_override"></a>
+### Nested Schema for `file_override`
+
+Required:
+
+- `cache_control` (String) The Cache-Control header value to apply to this specific file.
+- `file` (String) The exact path of the file within the ZIP archive to override.

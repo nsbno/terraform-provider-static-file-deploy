@@ -31,10 +31,18 @@ type DeploymentResource struct {
 
 // DeploymentResourceModel describes the resource data model.
 type DeploymentResourceModel struct {
-	Source        types.String `tfsdk:"source"`
-	SourceVersion types.String `tfsdk:"source_version"`
-	Target        types.String `tfsdk:"target"`
-	TargetRegion  types.String `tfsdk:"target_region"`
+	Source              types.String        `tfsdk:"source"`
+	SourceVersion       types.String        `tfsdk:"source_version"`
+	Target              types.String        `tfsdk:"target"`
+	TargetRegion        types.String        `tfsdk:"target_region"`
+	DefaultCacheControl types.String        `tfsdk:"default_cache_control"`
+	FileOverrides       []FileOverrideModel `tfsdk:"file_override"`
+}
+
+// FileOverrideModel describes a cache-control override for a specific file.
+type FileOverrideModel struct {
+	File         types.String `tfsdk:"file"`
+	CacheControl types.String `tfsdk:"cache_control"`
 }
 
 func (r *DeploymentResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -64,6 +72,27 @@ func (r *DeploymentResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Default:             stringdefault.StaticString("eu-west-1"),
 				Computed:            true,
 			},
+			"default_cache_control": schema.StringAttribute{
+				MarkdownDescription: "The default Cache-Control header value to apply to all deployed files. If not specified, no Cache-Control header will be set.",
+				Optional:            true,
+			},
+		},
+		Blocks: map[string]schema.Block{
+			"file_override": schema.ListNestedBlock{
+				MarkdownDescription: "Override the Cache-Control header for specific files. Each file path must be unique across all overrides.",
+				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"file": schema.StringAttribute{
+							MarkdownDescription: "The exact path of the file within the ZIP archive to override.",
+							Required:            true,
+						},
+						"cache_control": schema.StringAttribute{
+							MarkdownDescription: "The Cache-Control header value to apply to this specific file.",
+							Required:            true,
+						},
+					},
+				},
+			},
 		},
 	}
 }
@@ -83,7 +112,46 @@ func (r *DeploymentResource) Configure(ctx context.Context, req resource.Configu
 	}
 }
 
+// validateFileOverrides checks for duplicate file paths in file overrides.
+func (r *DeploymentResource) validateFileOverrides(data *DeploymentResourceModel) error {
+	if len(data.FileOverrides) == 0 {
+		return nil
+	}
+
+	seenFiles := make(map[string]bool)
+	for _, override := range data.FileOverrides {
+		filePath := override.File.ValueString()
+		if seenFiles[filePath] {
+			return fmt.Errorf("duplicate file path in file_override blocks: '%s'", filePath)
+		}
+		seenFiles[filePath] = true
+	}
+	return nil
+}
+
+// buildCacheControlConfig creates a CacheControlConfig from the resource model.
+func (r *DeploymentResource) buildCacheControlConfig(data *DeploymentResourceModel) *deployer.CacheControlConfig {
+	config := &deployer.CacheControlConfig{
+		FileOverrides: make(map[string]string),
+	}
+
+	if !data.DefaultCacheControl.IsNull() {
+		config.DefaultCacheControl = data.DefaultCacheControl.ValueString()
+	}
+
+	for _, override := range data.FileOverrides {
+		config.FileOverrides[override.File.ValueString()] = override.CacheControl.ValueString()
+	}
+
+	return config
+}
+
 func (r *DeploymentResource) runDeployment(data *DeploymentResourceModel) error {
+	// Validate file overrides for duplicates
+	if err := r.validateFileOverrides(data); err != nil {
+		return err
+	}
+
 	sourceParts := strings.SplitN(data.Source.ValueString(), "/", 2)
 	if len(sourceParts) != 2 {
 		return fmt.Errorf("invalid source format: %s", sourceParts)
@@ -93,7 +161,10 @@ func (r *DeploymentResource) runDeployment(data *DeploymentResourceModel) error 
 
 	deployment := r.deployer.NewDeployment(sourceBucket, data.Target.ValueString(), data.TargetRegion.ValueString())
 
-	_, err := deployment.Deploy(sourceKey, nil)
+	// Build cache control config from model
+	cacheControlConfig := r.buildCacheControlConfig(data)
+
+	_, err := deployment.Deploy(sourceKey, nil, cacheControlConfig)
 	if err != nil {
 		return fmt.Errorf("Error during deployment: %w", err)
 	}
