@@ -6,11 +6,17 @@ data "aws_s3_bucket" "website_bucket" {
   bucket = "123456789012-my-cool-bucket"
 }
 
-# Basic deployment without cache control
+# Basic deployment without cache control (using specific version)
 resource "staticfiledeploy_deployment" "example_deployment" {
   source         = "${data.vy_artifact_version.this.store}/${data.vy_artifact_version.this.path}"
   source_version = data.vy_artifact_version.this.version
   target         = data.aws_s3_bucket.website_bucket.bucket
+}
+
+# Basic deployment using latest version (source_version is optional)
+resource "staticfiledeploy_deployment" "latest_deployment" {
+  source = "my-source-bucket/path/to/source.zip"
+  target = data.aws_s3_bucket.website_bucket.bucket
 }
 
 # Deployment with default cache control and file-specific overrides

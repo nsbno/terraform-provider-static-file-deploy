@@ -59,8 +59,8 @@ func (r *DeploymentResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Required:            true,
 			},
 			"source_version": schema.StringAttribute{
-				MarkdownDescription: "The version ID of the source ZIP file in the S3 bucket. This is used to handle versioning of files in S3.",
-				Required:            true,
+				MarkdownDescription: "The version ID of the source ZIP file in the S3 bucket. This is used to handle versioning of files in S3. If not specified, the latest version will be used.",
+				Optional:            true,
 			},
 			"target": schema.StringAttribute{
 				MarkdownDescription: "The target S3 bucket where the unzipped files will be deployed.",
@@ -164,7 +164,13 @@ func (r *DeploymentResource) runDeployment(data *DeploymentResourceModel) error 
 	// Build cache control config from model
 	cacheControlConfig := r.buildCacheControlConfig(data)
 
-	_, err := deployment.Deploy(sourceKey, nil, cacheControlConfig)
+	// Use source version if provided, otherwise use latest (nil)
+	var sourceVersion *string
+	if !data.SourceVersion.IsNull() {
+		sourceVersion = data.SourceVersion.ValueStringPointer()
+	}
+
+	_, err := deployment.Deploy(sourceKey, sourceVersion, cacheControlConfig)
 	if err != nil {
 		return fmt.Errorf("Error during deployment: %w", err)
 	}
@@ -208,7 +214,13 @@ func (r *DeploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 
 	deployment := r.deployer.NewDeployment(sourceBucket, state.Target.ValueString(), state.TargetRegion.ValueString())
 
-	_, err := deployment.HashesForArtifact(sourceKey, nil)
+	// Use source version if provided, otherwise use latest (nil)
+	var sourceVersion *string
+	if !state.SourceVersion.IsNull() {
+		sourceVersion = state.SourceVersion.ValueStringPointer()
+	}
+
+	_, err := deployment.HashesForArtifact(sourceKey, sourceVersion)
 	if err != nil {
 		return
 	}

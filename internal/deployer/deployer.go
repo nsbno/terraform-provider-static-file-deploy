@@ -56,7 +56,7 @@ type CacheControlConfig struct {
 // If version is nil, the latest version is returned.
 func (d *Deployment) getDeploymentArtifact(key string, version *string) (*zip.Reader, error) {
 	var getObjectInput *s3.GetObjectInput
-	if version != nil {
+	if version == nil {
 		getObjectInput = &s3.GetObjectInput{
 			Bucket: aws.String(d.SourceBucket),
 			Key:    aws.String(key),
