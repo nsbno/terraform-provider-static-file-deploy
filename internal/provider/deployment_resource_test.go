@@ -118,13 +118,45 @@ func uploadZIPToS3(s3Client *s3.Client, bucketName, zipPath, zipKey string) erro
 	return err
 }
 
+func enableBucketVersioning(s3Client *s3.Client, bucketName string) error {
+	_, err := s3Client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	return err
+}
+
+func uploadZIPToS3WithVersion(s3Client *s3.Client, bucketName, zipPath, zipKey string) (string, error) {
+	zipFile, err := os.Open(zipPath)
+	if err != nil {
+		return "", err
+	}
+	defer zipFile.Close()
+
+	result, err := s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(zipKey),
+		Body:   zipFile,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if result.VersionId == nil {
+		return "", fmt.Errorf("no version ID returned from PutObject")
+	}
+
+	return *result.VersionId, nil
+}
+
 // Acceptance Test
 
 func testAccStaticFileDeployDeploymentConfig(sourceBucketName, zipKey, targetBucketName string) string {
 	return fmt.Sprintf(`
 resource "staticfiledeploy_deployment" "test_deployment" {
     source        = "%s/%s"
-    source_version = "some-version"
     target        = "%s"
 }
 `, sourceBucketName, zipKey, targetBucketName)
@@ -350,7 +382,6 @@ func testAccStaticFileDeployDeploymentConfig_withTargetRegion(sourceBucketName, 
 	return fmt.Sprintf(`
 resource "staticfiledeploy_deployment" "test_deployment" {
     source        = "%s/%s"
-    source_version = "some-version"
     target        = "%s"
 	target_region = "%s"
 }
@@ -458,7 +489,6 @@ func testAccStaticFileDeployDeploymentConfig_withDefaultCacheControl(sourceBucke
 	return fmt.Sprintf(`
 resource "staticfiledeploy_deployment" "test_deployment" {
     source                = "%s/%s"
-    source_version        = "some-version"
     target                = "%s"
     default_cache_control = "%s"
 }
@@ -543,7 +573,6 @@ func testAccStaticFileDeployDeploymentConfig_withFileOverride(sourceBucketName, 
 	return fmt.Sprintf(`
 resource "staticfiledeploy_deployment" "test_deployment" {
     source                = "%s/%s"
-    source_version        = "some-version"
     target                = "%s"
     default_cache_control = "%s"
 
@@ -636,7 +665,6 @@ func testAccStaticFileDeployDeploymentConfig_withNoCacheControl(sourceBucketName
 	return fmt.Sprintf(`
 resource "staticfiledeploy_deployment" "test_deployment" {
     source         = "%s/%s"
-    source_version = "some-version"
     target         = "%s"
 }
 `, sourceBucketName, zipKey, targetBucketName)
@@ -710,6 +738,91 @@ func TestAccStaticFileDeployDeployment_withNoCacheControl(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckStaticFileDeployDeploymentExists(s3Client, expectedFiles),
 					testAccCheckCacheControlHeaders(s3Client, targetBucketName, expectedCacheControl),
+				),
+			},
+		},
+	})
+}
+
+func testStaticfiledeployDeploymentConfigWithSourceVersion(sourceBucketName, zipKey, targetBucketName, sourceVersion string) string {
+	return fmt.Sprintf(`
+resource "staticfiledeploy_deployment" "test_deployment" {
+    source         = "%s/%s"
+    source_version = "%s"
+    target         = "%s"
+}
+`, sourceBucketName, zipKey, sourceVersion, targetBucketName)
+}
+
+func TestStaticFileDeployDeployment_withSourceVersion(t *testing.T) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	s3Client := s3.NewFromConfig(cfg)
+
+	sourceBucketName := fmt.Sprintf("tf-test-bucket-source-%s", acctest.RandString(8))
+	targetBucketName := fmt.Sprintf("tf-test-bucket-target-%s", acctest.RandString(8))
+
+	err = createS3Bucket(s3Client, sourceBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, sourceBucketName)
+
+	// Enable versioning on the source bucket
+	err = enableBucketVersioning(s3Client, sourceBucketName)
+	if err != nil {
+		t.Fatalf("Failed to enable versioning on source bucket: %s", err)
+	}
+
+	err = createS3Bucket(s3Client, targetBucketName, "eu-west-1")
+	if err != nil {
+		t.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	defer func(s3Client *s3.Client, bucketName string) {
+		_ = deleteS3Bucket(s3Client, bucketName)
+	}(s3Client, targetBucketName)
+
+	zipPath := "test_versioned.zip"
+	zipKey := "test_versioned.zip"
+
+	filesToCreate := map[string]string{
+		"file1.txt": "Test content for versioned file1",
+		"file2.js":  "Test content for versioned file2",
+	}
+
+	expectedFiles, err := createTestZIP(zipPath, filesToCreate)
+	if err != nil {
+		t.Fatalf("Failed to create ZIP file: %s", err)
+	}
+	defer os.Remove(zipPath)
+
+	// Upload with version ID capture
+	versionId, err := uploadZIPToS3WithVersion(s3Client, sourceBucketName, zipPath, zipKey)
+	if err != nil {
+		t.Fatalf("Failed to upload ZIP file to S3: %s", err)
+	}
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t)
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"aws": {
+						VersionConstraint: ">= 5.0.0",
+						Source:            "hashicorp/aws",
+					},
+				},
+				Config: testStaticfiledeployDeploymentConfigWithSourceVersion(sourceBucketName, zipKey, targetBucketName, versionId),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckStaticFileDeployDeploymentExists(s3Client, expectedFiles),
+					resource.TestCheckResourceAttr(ResourceName, "source_version", versionId),
 				),
 			},
 		},
