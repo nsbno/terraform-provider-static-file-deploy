@@ -74,10 +74,10 @@ func createTestZIP(zipPath string, files map[string]string) (map[string]string, 
 	if err != nil {
 		return nil, err
 	}
-	defer newZipFile.Close()
+	defer func() { _ = newZipFile.Close() }()
 
 	zipWriter := zip.NewWriter(newZipFile)
-	defer zipWriter.Close()
+	defer func() { _ = zipWriter.Close() }()
 
 	// Map to store the calculated MD5 hashes
 	fileHashes := make(map[string]string)
@@ -108,7 +108,7 @@ func uploadZIPToS3(s3Client *s3.Client, bucketName, zipPath, zipKey string) erro
 	if err != nil {
 		return err
 	}
-	defer zipFile.Close()
+	defer func() { _ = zipFile.Close() }()
 
 	_, err = s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
@@ -133,7 +133,7 @@ func uploadZIPToS3WithVersion(s3Client *s3.Client, bucketName, zipPath, zipKey s
 	if err != nil {
 		return "", err
 	}
-	defer zipFile.Close()
+	defer func() { _ = zipFile.Close() }()
 
 	result, err := s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
@@ -249,7 +249,7 @@ func TestAccStaticFileDeployDeployment_basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
 	if err != nil {
@@ -316,7 +316,7 @@ func TestAccStaticFileDeployDeployment_canChangeArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
 	if err != nil {
@@ -336,7 +336,7 @@ func TestAccStaticFileDeployDeployment_canChangeArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
-	defer os.Remove(zipPath2)
+	defer func() { _ = os.Remove(zipPath2) }()
 
 	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath2, zipKey2)
 	if err != nil {
@@ -430,7 +430,7 @@ func TestAccStaticFileDeployDeployment_withTargetRegion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	err = uploadZIPToS3(sourceS3Client, sourceBucketName, zipPath, zipKey)
 	if err != nil {
@@ -533,7 +533,7 @@ func TestAccStaticFileDeployDeployment_withDefaultCacheControl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
 	if err != nil {
@@ -579,7 +579,7 @@ resource "staticfiledeploy_deployment" "test_deployment" {
     file_override {
         file          = "%s"
         cache_control = "%s"
-    }
+	}
 }
 `, sourceBucketName, zipKey, targetBucketName, defaultCacheControl, overrideFile, overrideCacheControl)
 }
@@ -623,7 +623,7 @@ func TestAccStaticFileDeployDeployment_withFileOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
 	if err != nil {
@@ -708,7 +708,7 @@ func TestAccStaticFileDeployDeployment_withNoCacheControl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	err = uploadZIPToS3(s3Client, sourceBucketName, zipPath, zipKey)
 	if err != nil {
@@ -798,7 +798,7 @@ func TestStaticFileDeployDeployment_withSourceVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ZIP file: %s", err)
 	}
-	defer os.Remove(zipPath)
+	defer func() { _ = os.Remove(zipPath) }()
 
 	// Upload with version ID capture
 	versionId, err := uploadZIPToS3WithVersion(s3Client, sourceBucketName, zipPath, zipKey)

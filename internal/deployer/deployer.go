@@ -73,7 +73,7 @@ func (d *Deployment) getDeploymentArtifact(key string, version *string) (*zip.Re
 	if err != nil {
 		return nil, fmt.Errorf("failed to download object from S3: %w", err)
 	}
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 
 	buf := new(bytes.Buffer)
 	_, err = io.Copy(buf, result.Body)
@@ -99,7 +99,7 @@ func (d *Deployment) getDeploymentArtifactFileHashes(artifactZip *zip.Reader) (m
 		if err != nil {
 			return nil, fmt.Errorf("failed to open zipped file: %w", err)
 		}
-		defer zippedFile.Close()
+		defer func() { _ = zippedFile.Close() }()
 
 		fileContent, err := io.ReadAll(zippedFile)
 		if err != nil {
@@ -123,7 +123,7 @@ func (d *Deployment) uploadDeploymentArtifactFiles(artifactZip *zip.Reader, cach
 		if err != nil {
 			return fmt.Errorf("failed to open zipped file: %w", err)
 		}
-		defer zippedFile.Close()
+		defer func() { _ = zippedFile.Close() }()
 
 		fileContent, err := io.ReadAll(zippedFile)
 		if err != nil {

@@ -6,6 +6,8 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -13,7 +15,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/nsbno/terraform-provider-static-file-deploy/internal/deployer"
-	"strings"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -131,19 +132,19 @@ func (r *DeploymentResource) validateFileOverrides(data *DeploymentResourceModel
 
 // buildCacheControlConfig creates a CacheControlConfig from the resource model.
 func (r *DeploymentResource) buildCacheControlConfig(data *DeploymentResourceModel) *deployer.CacheControlConfig {
-	config := &deployer.CacheControlConfig{
+	ccConfig := &deployer.CacheControlConfig{
 		FileOverrides: make(map[string]string),
 	}
 
 	if !data.DefaultCacheControl.IsNull() {
-		config.DefaultCacheControl = data.DefaultCacheControl.ValueString()
+		ccConfig.DefaultCacheControl = data.DefaultCacheControl.ValueString()
 	}
 
 	for _, override := range data.FileOverrides {
-		config.FileOverrides[override.File.ValueString()] = override.CacheControl.ValueString()
+		ccConfig.FileOverrides[override.File.ValueString()] = override.CacheControl.ValueString()
 	}
 
-	return config
+	return ccConfig
 }
 
 func (r *DeploymentResource) runDeployment(data *DeploymentResourceModel) error {
@@ -172,7 +173,7 @@ func (r *DeploymentResource) runDeployment(data *DeploymentResourceModel) error 
 
 	_, err := deployment.Deploy(sourceKey, sourceVersion, cacheControlConfig)
 	if err != nil {
-		return fmt.Errorf("Error during deployment: %w", err)
+		return fmt.Errorf("error during deployment: %w", err)
 	}
 
 	return nil

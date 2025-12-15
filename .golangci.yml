@@ -1,12 +1,11 @@
+version: 2
+
 # Visit https://golangci-lint.run/ for usage documentation
 # and information on other useful linters
-issues:
-  max-per-linter: 0
-  max-same-issues: 0
 
-output:
-  formats:
-    - format: colored-line-number
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 linters:
   disable-all: true
@@ -16,9 +15,7 @@ linters:
     - errcheck
     - forcetypeassert
     - godot
-    - gofmt
     - govet
-    - gosimple
     - ineffassign
     - makezero
     - misspell
@@ -29,3 +26,7 @@ linters:
     - unconvert
     - unparam
     - unused
+
+formatters:
+  enable:
+    - gofmt
