@@ -21,11 +21,17 @@ data "aws_s3_bucket" "website_bucket" {
   bucket = "123456789012-my-cool-bucket"
 }
 
-# Basic deployment without cache control
+# Basic deployment without cache control (using specific version)
 resource "staticfiledeploy_deployment" "example_deployment" {
   source         = "${data.vy_artifact_version.this.store}/${data.vy_artifact_version.this.path}"
   source_version = data.vy_artifact_version.this.version
   target         = data.aws_s3_bucket.website_bucket.bucket
+}
+
+# Basic deployment using latest version (source_version is optional)
+resource "staticfiledeploy_deployment" "latest_deployment" {
+  source = "my-source-bucket/path/to/source.zip"
+  target = data.aws_s3_bucket.website_bucket.bucket
 }
 
 # Deployment with default cache control and file-specific overrides
@@ -56,13 +62,13 @@ resource "staticfiledeploy_deployment" "with_cache_control" {
 ### Required
 
 - `source` (String) The S3 bucket and path to the ZIP file containing the source files to be deployed. Format: 'bucket-name/path/to/source.zip'.
-- `source_version` (String) The version ID of the source ZIP file in the S3 bucket. This is used to handle versioning of files in S3.
 - `target` (String) The target S3 bucket where the unzipped files will be deployed.
 
 ### Optional
 
 - `default_cache_control` (String) The default Cache-Control header value to apply to all deployed files. If not specified, no Cache-Control header will be set.
 - `file_override` (Block List) Override the Cache-Control header for specific files. Each file path must be unique across all overrides. (see [below for nested schema](#nestedblock--file_override))
+- `source_version` (String) The version ID of the source ZIP file in the S3 bucket. This is used to handle versioning of files in S3. If not specified, the latest version will be used.
 - `target_region` (String) The target region of the S3 bucket where the unzipped files will be deployed.
 
 <a id="nestedblock--file_override"></a>
